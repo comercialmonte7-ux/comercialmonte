@@ -3,7 +3,7 @@ export interface Worker {
   uid?: string;
   email?: string;
   name: string;
-  role: 'owner' | 'boss' | 'operator' | 'motosierrist' | 'worker';
+  role: 'owner' | 'supervisor' | 'boss' | 'operator' | 'motosierrist' | 'worker';
 }
 
 export interface HarvestRecord {

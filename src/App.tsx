@@ -472,7 +472,7 @@ export default function App() {
 
   const batchAddWorkers = async () => {
     const list = [
-      { name: "Cristian Jara", role: "boss" as const }, // Supervisor role was boss in types
+      { name: "Cristian Jara", role: "supervisor" as const },
       { name: "Adonis Espinoza", role: "boss" as const },
       { name: "René Villa", role: "operator" as const },
       { name: "Héctor Muñoz", role: "motosierrist" as const },
@@ -481,15 +481,23 @@ export default function App() {
       { name: "Julio Mulato", role: "motosierrist" as const },
     ];
 
-    for (const w of list) {
-      const id = `w-${Math.random().toString(36).substr(2, 9)}`;
-      await setDoc(doc(db, 'users', id), {
-        id,
-        ...w,
-        createdAt: Timestamp.now()
-      });
+    try {
+      setIsSavingWorker(true);
+      for (const w of list) {
+        const id = `man-${w.name.toLowerCase().replace(/\s+/g, '-')}`;
+        await setDoc(doc(db, 'users', id), {
+          id,
+          ...w,
+          createdAt: Timestamp.now()
+        });
+      }
+      alert("¡Éxito! Todo el personal (Supervisor, Jefe de Faena, Operador y Motosierristas) ha sido cargado.");
+    } catch (err) {
+      console.error("Error en carga masiva:", err);
+      alert("Hubo un problema al cargar el personal. Revisa tu conexión.");
+    } finally {
+      setIsSavingWorker(false);
     }
-    alert("Trabajadores agregados exitosamente");
   };
 
   const handleDeleteWorker = async (id: string) => {
@@ -694,6 +702,7 @@ export default function App() {
               <p className="text-sm font-medium truncate">{userProfile.name}</p>
               <p className="text-[10px] text-white/50 uppercase truncate tracking-tighter">
                 {userProfile.role === 'owner' ? 'Propietario' :
+                 userProfile.role === 'supervisor' ? 'Supervisor' :
                  userProfile.role === 'boss' ? 'Jefe de Faena' :
                  userProfile.role === 'operator' ? 'Operador' :
                  userProfile.role === 'motosierrist' ? 'Motosierrista' : 'Trabajador'}
@@ -981,6 +990,7 @@ export default function App() {
                         <h4 className="font-bold truncate">{worker.name || 'Usuario'}</h4>
                         <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold">
                           {worker.role === 'owner' ? 'Propietario / Admin' :
+                           worker.role === 'supervisor' ? 'Supervisor' :
                            worker.role === 'boss' ? 'Jefe de Faena' : 
                            worker.role === 'operator' ? 'Operador Forestal' :
                            worker.role === 'motosierrist' ? 'Motosierrista' : 'Trabajador General'}
@@ -1438,46 +1448,40 @@ export default function App() {
                   <select name="recipient" defaultValue={(editingSupply as any)?.recipient} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 appearance-none">
                     <option value="">Seleccionar Receptor...</option>
                     
-                    {/* Suggested recipients based on category */}
-                    <optgroup label="Sugeridos (Personal)">
-                      {workers.filter(w => {
-                        if (supplyCategoryFilter === 'fuel_chainsaw' || supplyCategoryFilter === 'oil_premix' || supplyCategoryFilter === 'oil_chain') return w.role === 'motosierrist';
-                        if (supplyCategoryFilter === 'fuel_vehicle') return w.role === 'boss' || w.role === 'operator';
-                        return false;
-                      }).map(w => (
-                        <option key={w.id} value={w.name}>{w.name} ({
-                          w.role === 'boss' ? 'Jefe' : 
-                          w.role === 'operator' ? 'Operador' : 
-                          w.role === 'motosierrist' ? 'Motosierrista' : 'Personal'
-                        })</option>
-                      ))}
+                    <optgroup label="Personal (Certificado)">
+                      {[...workers]
+                        .filter((v, i, a) => a.findIndex(t => t.name === v.name) === i)
+                        .sort((a, b) => {
+                          const roleScore = (r: string) => {
+                            if (r === 'supervisor') return 1;
+                            if (r === 'boss') return 2;
+                            if (r === 'operator') return 3;
+                            if (r === 'motosierrist') return 4;
+                            return 5;
+                          };
+                          const scoreA = roleScore(a.role);
+                          const scoreB = roleScore(b.role);
+                          if (scoreA !== scoreB) return scoreA - scoreB;
+                          return (a.name || '').localeCompare(b.name || '');
+                        })
+                        .map(w => {
+                          const roleLabel = 
+                            w.role === 'owner' ? 'Admin' :
+                            w.role === 'supervisor' ? 'Supervisor' :
+                            w.role === 'boss' ? 'Jefe de Faena' : 
+                            w.role === 'operator' ? 'Operador Torre' :
+                            w.role === 'motosierrist' ? 'Motosierrista' : 'Personal';
+                          return (
+                            <option key={`all-${w.id}`} value={w.name}>
+                              {w.name} ({roleLabel})
+                            </option>
+                          );
+                        })
+                      }
                     </optgroup>
 
                     <optgroup label="Maquinaria">
-                      {machines.filter(m => {
-                         if (supplyCategoryFilter === 'fuel_vehicle' || supplyCategoryFilter === 'oil_motor') return true;
-                         return m.type === 'chainsaw';
-                      }).map(m => (
-                        <option key={m.id} value={m.name}>{m.name}</option>
-                      ))}
-                    </optgroup>
-
-                    <optgroup label="Todo el Personal">
-                      {workers.filter(w => {
-                        // Filter out those already in suggested to avoid duplicates
-                        if (supplyCategoryFilter === 'fuel_chainsaw' || supplyCategoryFilter === 'oil_premix' || supplyCategoryFilter === 'oil_chain') return w.role !== 'motosierrist';
-                        if (supplyCategoryFilter === 'fuel_vehicle') return w.role !== 'boss' && w.role !== 'operator';
-                        return true;
-                      }).map(w => (
-                        <option key={w.id} value={w.name}>{w.name}</option>
-                      ))}
-                    </optgroup>
-                    
-                    <optgroup label="Otras Máquinas">
-                      {machines.filter(m => {
-                         if (supplyCategoryFilter === 'fuel_vehicle' || supplyCategoryFilter === 'oil_motor') return false;
-                         return m.type !== 'chainsaw';
-                      }).map(m => (
+                      {machines.sort((a,b) => a.name.localeCompare(b.name)).map(m => (
                         <option key={m.id} value={m.name}>{m.name}</option>
                       ))}
                     </optgroup>
@@ -1618,7 +1622,8 @@ export default function App() {
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Rol del Trabajador</label>
                   <select name="role" className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 appearance-none">
                     <option value="worker">Trabajador General</option>
-                    <option value="boss">Jefe de Faena</option>
+                    <option value="supervisor">Supervisor (C. Jara)</option>
+                    <option value="boss">Jefe de Faena (A. Espinoza)</option>
                     <option value="operator">Operador / Maquinista</option>
                     <option value="motosierrist">Motosierrista Profesional</option>
                   </select>

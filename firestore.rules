@@ -67,13 +67,12 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() &&
         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner' ||
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'supervisor' ||
          (request.auth.token.email == "mari.ricardo@gmail.com" && request.auth.token.email_verified == true));
     }
 
     function isSupervisor() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['owner', 'supervisor']);
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['owner', 'boss']);
     }
 
     function uidUnchanged() {
@@ -81,7 +80,7 @@ service cloud.firestore {
     }
 
     function isValidEmail(email) {
-      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+      return email is string && (email == "" || email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"));
     }
 
     function isValidStringLength(field, min, max) {
@@ -95,11 +94,9 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'name', 'email', 'role']) &&
-             data.uid == request.auth.uid &&
+      return data.keys().hasAll(['id', 'name', 'role']) &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             isValidEmail(data.email) &&
-             data.role in ['owner', 'supervisor', 'crew_lead'];
+             data.role in ['owner', 'supervisor', 'boss', 'operator', 'motosierrist', 'worker'];
     }
 
     function isValidHarvest(data) {
@@ -121,11 +118,10 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isAuthenticated();
-      // Only owner can create users with roles, but a new user can create their own profile as 'crew_lead' initially
-      // Highly secure: users can't self-promote to admin/owner
-      allow create: if isOwner(userId) && isValidUser(request.resource.data) && 
-                     (request.resource.data.role == 'crew_lead' || isAdmin());
-      allow update: if isOwner(userId) && isValidUser(request.resource.data) &&
+      // Admins/Supervisors can manage any user. 
+      // Individual users can only create/update their own profile initially.
+      allow create: if (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data);
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data) &&
                      (request.resource.data.role == resource.data.role || isAdmin());
       allow delete: if isAdmin();
     }
