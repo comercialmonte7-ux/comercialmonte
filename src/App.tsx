@@ -46,7 +46,8 @@ import {
   Calendar,
   Package,
   ArrowDownToLine,
-  ArrowUpFromLine
+  ArrowUpFromLine,
+  Menu
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -93,6 +94,7 @@ export default function App() {
   const [isAddingSupply, setIsAddingSupply] = useState(false);
   const [isAddingMachine, setIsAddingMachine] = useState(false);
   const [isReceivingStock, setIsReceivingStock] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Auth Listener
   useEffect(() => {
@@ -379,6 +381,16 @@ export default function App() {
             <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-6 h-6" referrerPolicy="no-referrer" />
             Acceder con Google
           </button>
+          
+          <div className="mt-6 p-4 bg-white/5 rounded-xl border border-white/10">
+            <p className="text-white/40 text-[10px] uppercase tracking-widest mb-2 font-bold flex items-center gap-2">
+              <AlertCircle size={12} /> ¿Problemas en iPhone?
+            </p>
+            <p className="text-white/30 text-[10px] leading-relaxed">
+              Si el botón no responde en Safari, ve a <b>Ajustes {'>'} Safari</b> y desactiva <b>"Prevenir rastreo entre sitios"</b>, o usa el enlace directo de producción.
+            </p>
+          </div>
+
           <p className="mt-8 text-center text-white/20 text-[10px] uppercase tracking-tighter">Acceso restringido solo a personal autorizado</p>
         </div>
       </div>
@@ -387,32 +399,53 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen bg-[#F8F9F8] text-[#1D2B1E] font-sans selection:bg-[#3E5B3F] selection:text-white">
+      {/* Sidebar Overlay for Mobile */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsSidebarOpen(false)}
+            className="fixed inset-0 z-40 bg-[#1D2B1E]/60 backdrop-blur-sm lg:hidden"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Sidebar */}
-      <aside className="w-64 bg-[#1D2B1E] text-white flex flex-col hidden lg:flex sticky top-0 h-screen">
-        <div className="p-8 flex items-center gap-3">
-          <div className="w-10 h-10 bg-[#3E5B3F] rounded-xl flex items-center justify-center">
-            <Trees size={24} className="text-[#A7C0A8]" />
+      <aside className={cn(
+        "bg-[#1D2B1E] text-white flex flex-col fixed inset-y-0 left-0 z-50 w-72 transition-transform duration-300 transform lg:static lg:translate-x-0 lg:flex h-screen",
+        isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+      )}>
+        <div className="p-8 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-[#3E5B3F] rounded-xl flex items-center justify-center">
+              <Trees size={24} className="text-[#A7C0A8]" />
+            </div>
+            <div>
+              <h1 className="font-bold text-lg leading-tight uppercase tracking-wider">C. Monte</h1>
+              <p className="text-xs text-white/40 font-mono">Control Pro v2.0</p>
+            </div>
           </div>
-          <div>
-            <h1 className="font-bold text-lg leading-tight uppercase tracking-wider">C. Monte</h1>
-            <p className="text-xs text-white/40 font-mono">Control Pro v2.0</p>
-          </div>
+          <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden text-white/40 hover:text-white">
+            <Menu size={24} />
+          </button>
         </div>
 
         <nav className="flex-1 mt-6 space-y-1.5 px-4 overflow-y-auto custom-scrollbar">
-          <SidebarLink icon={<LayoutDashboard size={18} />} label="Panel Control" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-          <SidebarLink icon={<FileText size={18} />} label="Registro Cosecha" active={activeTab === 'reports'} onClick={() => setActiveTab('reports')} />
-          <SidebarLink icon={<Fuel size={18} />} label="Uso de Insumos" active={activeTab === 'supplies'} onClick={() => setActiveTab('supplies')} />
+          <SidebarLink icon={<LayoutDashboard size={18} />} label="Panel Control" active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} />
+          <SidebarLink icon={<FileText size={18} />} label="Registro Cosecha" active={activeTab === 'reports'} onClick={() => { setActiveTab('reports'); setIsSidebarOpen(false); }} />
+          <SidebarLink icon={<Fuel size={18} />} label="Uso de Insumos" active={activeTab === 'supplies'} onClick={() => { setActiveTab('supplies'); setIsSidebarOpen(false); }} />
           
           {userProfile.role !== 'crew_lead' && (
             <>
-              <SidebarLink icon={<Package size={18} />} label="Inventario" active={activeTab === 'inventory'} onClick={() => setActiveTab('inventory')} />
-              <SidebarLink icon={<Wrench size={18} />} label="Maquinaria" active={activeTab === 'maintenance'} onClick={() => setActiveTab('maintenance')} />
-              <SidebarLink icon={<Users size={18} />} label="Personal" active={activeTab === 'workers'} onClick={() => setActiveTab('workers')} />
+              <SidebarLink icon={<Package size={18} />} label="Inventario" active={activeTab === 'inventory'} onClick={() => { setActiveTab('inventory'); setIsSidebarOpen(false); }} />
+              <SidebarLink icon={<Wrench size={18} />} label="Maquinaria" active={activeTab === 'maintenance'} onClick={() => { setActiveTab('maintenance'); setIsSidebarOpen(false); }} />
+              <SidebarLink icon={<Users size={18} />} label="Personal" active={activeTab === 'workers'} onClick={() => { setActiveTab('workers'); setIsSidebarOpen(false); }} />
             </>
           )}
           
-          <SidebarLink icon={<Settings size={18} />} label="Configuración" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
+          <SidebarLink icon={<Settings size={18} />} label="Configuración" active={activeTab === 'settings'} onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }} />
         </nav>
 
         <div className="p-6 border-t border-white/10 space-y-4">
@@ -435,20 +468,24 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto">
-        <header className="h-16 border-b border-[#3E5B3F]/10 bg-white sticky top-0 z-10 px-8 flex items-center justify-between shadow-sm">
+      <main className="flex-1 overflow-auto pb-24 lg:pb-0">
+        <header className="h-16 border-b border-[#3E5B3F]/10 bg-white sticky top-0 z-10 px-4 lg:px-8 flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-4">
+            <button onClick={() => setIsSidebarOpen(true)} className="lg:hidden p-2 -ml-2 text-[#3E5B3F]/60 hover:text-[#3E5B3F] transition-colors">
+              <Menu size={24} />
+            </button>
             <h2 className="text-sm font-mono uppercase tracking-widest text-[#3E5B3F]/60">
               {activeTab}
             </h2>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             {activeTab === 'reports' && (
               <button 
                 onClick={exportToCSV}
-                className="px-4 py-2 border border-gray-200 text-gray-600 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-gray-50 transition-colors"
+                className="p-2 lg:px-4 lg:py-2 border border-gray-200 text-gray-600 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-gray-50 transition-colors"
+                title="Exportar CSV"
               >
-                <Download size={18} /> Exportar CSV
+                <Download size={18} /> <span className="hidden lg:inline">Exportar CSV</span>
               </button>
             )}
             {['reports', 'supplies', 'maintenance'].includes(activeTab) && (
@@ -458,15 +495,16 @@ export default function App() {
                   else if (activeTab === 'supplies') setIsAddingSupply(true);
                   else if (activeTab === 'maintenance') setIsAddingMachine(true);
                 }}
-                className="px-4 py-2 bg-[#1D2B1E] text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-[#2C3E2D] transition-colors shadow-sm"
+                className="p-2 lg:px-4 lg:py-2 bg-[#1D2B1E] text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-[#2C3E2D] transition-colors shadow-sm"
+                title="Nuevo Registro"
               >
-                <Plus size={18} /> {activeTab === 'maintenance' ? 'Añadir Máquina' : 'Nuevo Registro'}
+                <Plus size={18} /> <span className="hidden lg:inline">{activeTab === 'maintenance' ? 'Añadir Máquina' : 'Nuevo'}</span>
               </button>
             )}
           </div>
         </header>
 
-        <div className="p-8 max-w-7xl mx-auto">
+        <div className="p-4 lg:p-8 max-w-7xl mx-auto">
           <AnimatePresence mode="wait">
             {activeTab === 'dashboard' && (
               <motion.div key="dashboard" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-8">
@@ -833,6 +871,15 @@ export default function App() {
         </div>
       </main>
 
+      {/* Mobile Bottom Navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-6 py-3 flex items-center justify-between z-40 lg:hidden shadow-[0_-5px_20px_rgba(0,0,0,0.05)]">
+        <MobileNavLink icon={<LayoutDashboard size={20} />} active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
+        <MobileNavLink icon={<FileText size={20} />} active={activeTab === 'reports'} onClick={() => setActiveTab('reports')} />
+        <MobileNavLink icon={<Fuel size={20} />} active={activeTab === 'supplies'} onClick={() => setActiveTab('supplies')} />
+        <MobileNavLink icon={<Package size={20} />} active={activeTab === 'inventory'} onClick={() => setActiveTab('inventory')} />
+        <MobileNavLink icon={<Settings size={20} />} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
+      </nav>
+
       {/* Add Record Modal */}
       <AnimatePresence>
         {isAddingRecord && (
@@ -850,11 +897,11 @@ export default function App() {
               exit={{ opacity: 0, scale: 0.95 }}
               className="relative bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden"
             >
-              <div className="bg-[#1D2B1E] p-8 text-white">
-                <h3 className="text-2xl font-bold">Nuevo Reporte</h3>
-                <p className="text-white/60 text-sm mt-1">Ingresa los datos de la jornada actual</p>
+              <div className="bg-[#1D2B1E] p-6 lg:p-8 text-white">
+                <h3 className="text-xl lg:text-2xl font-bold italic font-serif">Nuevo Reporte</h3>
+                <p className="text-white/60 text-xs mt-1">Ingresa los datos de la jornada actual</p>
               </div>
-              <form onSubmit={handleAddRecord} className="p-8 space-y-6">
+              <form onSubmit={handleAddRecord} className="p-6 lg:p-8 space-y-4 lg:space-y-6">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Fecha</label>
@@ -945,13 +992,13 @@ export default function App() {
               exit={{ opacity: 0, scale: 0.95 }}
               className="relative bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden"
             >
-              <div className="bg-[#1D2B1E] p-8 text-white">
-                <h3 className="text-2xl font-bold flex items-center gap-2">
+              <div className="bg-[#1D2B1E] p-6 lg:p-8 text-white">
+                <h3 className="text-xl lg:text-2xl font-bold flex items-center gap-2 italic font-serif">
                   <Droplets /> Control de Insumos
                 </h3>
-                <p className="text-white/60 text-sm mt-1">Registra carga de combustible u aceites</p>
+                <p className="text-white/60 text-xs mt-1">Registra carga de combustible u aceites</p>
               </div>
-              <form onSubmit={handleAddSupply} className="p-8 space-y-6">
+              <form onSubmit={handleAddSupply} className="p-6 lg:p-8 space-y-4 lg:space-y-6">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Fecha</label>
@@ -1013,11 +1060,11 @@ export default function App() {
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsAddingMachine(false)} className="absolute inset-0 bg-[#1D2B1E]/60 backdrop-blur-sm" />
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden">
-              <div className="bg-[#1D2B1E] p-8 text-white">
-                <h3 className="text-2xl font-bold flex items-center gap-2 font-serif italic"><Wrench /> Nueva Maquinaria</h3>
-                <p className="text-white/60 text-sm mt-1">Registra equipos nuevos en el inventario</p>
+              <div className="bg-[#1D2B1E] p-6 lg:p-8 text-white">
+                <h3 className="text-xl lg:text-2xl font-bold flex items-center gap-2 font-serif italic"><Wrench /> Nueva Maquinaria</h3>
+                <p className="text-white/60 text-xs mt-1">Registra equipos nuevos en el inventario</p>
               </div>
-              <form onSubmit={handleAddMachine} className="p-8 space-y-6">
+              <form onSubmit={handleAddMachine} className="p-6 lg:p-8 space-y-4 lg:space-y-6">
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Nombre del Equipo</label>
                   <input required name="name" type="text" placeholder="Ej: Camión Scania R500" className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20" />
@@ -1087,6 +1134,20 @@ export default function App() {
   );
 }
 
+function MobileNavLink({ icon, active, onClick }: { icon: React.ReactNode, active: boolean, onClick: () => void }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={cn(
+        "p-2 rounded-xl transition-all",
+        active ? "bg-[#3E5B3F] text-white shadow-lg" : "text-gray-400"
+      )}
+    >
+      {icon}
+    </button>
+  );
+}
+
 function SidebarLink({ icon, label, active, onClick }: { 
   icon: React.ReactNode, 
   label: string, 
@@ -1113,19 +1174,19 @@ function SidebarLink({ icon, label, active, onClick }: {
 
 function StatCard({ title, value, icon, subtext }: { title: string, value: string, icon: React.ReactNode, subtext: string }) {
   return (
-    <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#3E5B3F]/5 relative overflow-hidden group hover:shadow-md transition-shadow">
-      <div className="flex justify-between items-start mb-4">
+    <div className="bg-white p-4 lg:p-6 rounded-2xl shadow-sm border border-[#3E5B3F]/5 relative overflow-hidden group hover:shadow-md transition-shadow">
+      <div className="flex justify-between items-start mb-2 lg:mb-4">
         <div className="p-2 bg-gray-50 rounded-lg group-hover:bg-[#F8F9F8] transition-colors">
           {icon}
         </div>
       </div>
       <div>
-        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">{title}</p>
-        <h4 className="text-2xl font-bold font-mono tracking-tighter">{value}</h4>
+        <p className="text-[10px] lg:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">{title}</p>
+        <h4 className="text-xl lg:text-2xl font-bold font-mono tracking-tighter">{value}</h4>
         <p className="text-[10px] text-gray-400 mt-2 font-medium">{subtext}</p>
       </div>
       <div className="absolute right-0 bottom-0 opacity-[0.03] pointer-events-none group-hover:scale-110 transition-transform">
-        {React.cloneElement(icon as React.ReactElement, { size: 80 })}
+        {React.cloneElement(icon as React.ReactElement, { size: 60 })}
       </div>
     </div>
   );

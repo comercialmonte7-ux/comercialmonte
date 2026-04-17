@@ -1,6 +1,6 @@
 {
-  "name": "Comercial Monte - Control de Cosecha",
-  "description": "Sistema integral para el seguimiento de extracción y arrumado de madera para Comercial Monte SPA.",
+  "name": "Control Monte",
+  "description": "Sistema de gestión forestal para Comercial Monte SPA. Seguimiento de cosecha, inventario y maquinaria.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }
