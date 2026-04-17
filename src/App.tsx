@@ -15,6 +15,7 @@ import {
   setDoc,
   addDoc,
   updateDoc,
+  deleteDoc,
   Timestamp,
   User,
   handleFirestoreError,
@@ -47,7 +48,14 @@ import {
   Package,
   ArrowDownToLine,
   ArrowUpFromLine,
-  Menu
+  Menu,
+  Edit,
+  Trash2,
+  Clock,
+  MapPin,
+  MessageCircle,
+  Share2,
+  Navigation
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -95,6 +103,15 @@ export default function App() {
   const [isAddingMachine, setIsAddingMachine] = useState(false);
   const [isReceivingStock, setIsReceivingStock] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isAddingWorker, setIsAddingWorker] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
+  const [currentLocation, setCurrentLocation] = useState<{lat: number, lng: number} | null>(null);
+  const [supplyCategoryFilter, setSupplyCategoryFilter] = useState<SupplyCategory>('fuel_vehicle');
+  const [isSavingWorker, setIsSavingWorker] = useState(false);
+  
+  const [editingRecord, setEditingRecord] = useState<HarvestRecord | null>(null);
+  const [editingSupply, setEditingSupply] = useState<SupplyRecord | null>(null);
+  const [editingMachine, setEditingMachine] = useState<Machine | null>(null);
 
   // Auth Listener
   useEffect(() => {
@@ -115,7 +132,7 @@ export default function App() {
             uid: user.uid, // Required by Firestore rules
             name: user.displayName || 'Nuevo integrante',
             email: user.email || '', // Required by Firestore rules
-            role: isOwnerRef ? 'owner' : 'crew_lead'
+            role: isOwnerRef ? 'owner' : 'boss'
           };
           await setDoc(doc(db, 'users', user.uid), newProfile);
           setUserProfile(newProfile);
@@ -162,7 +179,7 @@ export default function App() {
 
     const unsubWorkers = onSnapshot(collection(db, 'users'), 
       (snapshot) => {
-        setWorkers(snapshot.docs.map(d => d.data() as Worker));
+        setWorkers(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Worker)));
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'users')
     );
@@ -232,17 +249,43 @@ export default function App() {
     if (!currentUser) return;
     const formData = new FormData(e.currentTarget);
     try {
-      await addDoc(collection(db, 'harvests'), {
-        date: formData.get('date') as string,
-        extractedVolume: Number(formData.get('extracted')),
-        stackedVolume: Number(formData.get('stacked')),
-        reportedBy: currentUser.uid,
-        notes: formData.get('notes') as string,
-        createdAt: Timestamp.now()
-      });
-      setIsAddingRecord(false);
+      if (editingRecord) {
+        await updateDoc(doc(db, 'harvests', editingRecord.id), {
+          date: formData.get('date') as string,
+          time: formData.get('time') as string || new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
+          sector: formData.get('sector') as string,
+          location: currentLocation || editingRecord.location || null,
+          extractedVolume: Number(formData.get('extracted')),
+          stackedVolume: Number(formData.get('stacked')),
+          notes: formData.get('notes') as string,
+        });
+        setEditingRecord(null);
+      } else {
+        await addDoc(collection(db, 'harvests'), {
+          date: formData.get('date') as string,
+          time: formData.get('time') as string || new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
+          sector: formData.get('sector') as string,
+          location: currentLocation,
+          extractedVolume: Number(formData.get('extracted')),
+          stackedVolume: Number(formData.get('stacked')),
+          reportedBy: currentUser.uid,
+          notes: formData.get('notes') as string,
+          createdAt: Timestamp.now()
+        });
+        setIsAddingRecord(false);
+      }
+      setCurrentLocation(null);
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'harvests');
+      handleFirestoreError(err, editingRecord ? OperationType.UPDATE : OperationType.CREATE, 'harvests');
+    }
+  };
+
+  const handleDeleteRecord = async (id: string) => {
+    if (!window.confirm('¿Estás seguro de eliminar este registro?')) return;
+    try {
+      await deleteDoc(doc(db, 'harvests', id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `harvests/${id}`);
     }
   };
 
@@ -254,29 +297,85 @@ export default function App() {
     const quantity = Number(formData.get('quantity'));
     
     try {
-      await addDoc(collection(db, 'supplies'), {
-        date: formData.get('date') as string,
-        category,
-        quantity,
-        unit: formData.get('unit') as string,
-        description: formData.get('description') as string,
-        reportedBy: currentUser.uid,
-        createdAt: Timestamp.now()
-      });
-      
-      // Update Stock (Atomic update not possible easily without transactions, 
-      // but for this scale we just updateDoc)
-      const stockDoc = doc(db, 'stock', category);
-      const currentStock = stock.find(s => s.category === category);
+      if (editingSupply) {
+        // Find the difference to adjust stock
+        const diff = quantity - editingSupply.quantity;
+        
+        await updateDoc(doc(db, 'supplies', editingSupply.id), {
+          date: formData.get('date') as string,
+          time: formData.get('time') as string || new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
+          category,
+          quantity,
+          unit: formData.get('unit') as string,
+          description: formData.get('description') as string,
+          recipient: formData.get('recipient') as string,
+        });
+
+        // Correct stock if category changed or quantity changed
+        if (editingSupply.category === category) {
+          const stockDoc = doc(db, 'stock', category);
+          const currentStock = stock.find(s => s.category === category);
+          if (currentStock) {
+            await updateDoc(stockDoc, {
+              current: currentStock.current - diff
+            });
+          }
+        } else {
+          // Put back old stock
+          const oldStockDoc = doc(db, 'stock', editingSupply.category);
+          const oldStock = stock.find(s => s.category === editingSupply.category);
+          if (oldStock) {
+            await updateDoc(oldStockDoc, { current: oldStock.current + editingSupply.quantity });
+          }
+          // Take from new stock
+          const newStockDoc = doc(db, 'stock', category);
+          const newStock = stock.find(s => s.category === category);
+          if (newStock) {
+            await updateDoc(newStockDoc, { current: newStock.current - quantity });
+          }
+        }
+        setEditingSupply(null);
+      } else {
+        await addDoc(collection(db, 'supplies'), {
+          date: formData.get('date') as string,
+          time: formData.get('time') as string || new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
+          category,
+          quantity,
+          unit: formData.get('unit') as string,
+          description: formData.get('description') as string,
+          recipient: formData.get('recipient') as string,
+          reportedBy: currentUser.uid,
+          createdAt: Timestamp.now()
+        });
+        
+        const stockDoc = doc(db, 'stock', category);
+        const currentStock = stock.find(s => s.category === category);
+        if (currentStock) {
+          await updateDoc(stockDoc, {
+            current: currentStock.current - quantity
+          });
+        }
+        setIsAddingSupply(false);
+      }
+    } catch (err) {
+      handleFirestoreError(err, editingSupply ? OperationType.UPDATE : OperationType.WRITE, 'supplies');
+    }
+  };
+
+  const handleDeleteSupply = async (supply: SupplyRecord) => {
+    if (!window.confirm('¿Eliminar registro de insumo?')) return;
+    try {
+      await deleteDoc(doc(db, 'supplies', supply.id));
+      // Return stock
+      const stockDoc = doc(db, 'stock', supply.category);
+      const currentStock = stock.find(s => s.category === supply.category);
       if (currentStock) {
         await updateDoc(stockDoc, {
-          current: currentStock.current - quantity
+          current: currentStock.current + supply.quantity
         });
       }
-
-      setIsAddingSupply(false);
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `supplies/${category}`);
+      handleFirestoreError(err, OperationType.DELETE, `supplies/${supply.id}`);
     }
   };
 
@@ -311,18 +410,156 @@ export default function App() {
   const handleAddMachine = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
+    const machineData = {
+      name: formData.get('name') as string,
+      type: formData.get('type') as any,
+      lastMaintenanceDate: formData.get('date') as string,
+      nextMaintenanceDate: new Date(new Date(formData.get('date') as string).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      hoursWorked: Number(formData.get('hours')),
+    };
+
     try {
-      await addDoc(collection(db, 'machines'), {
-        name: formData.get('name') as string,
-        type: formData.get('type') as any,
-        lastMaintenanceDate: formData.get('date') as string,
-        nextMaintenanceDate: new Date(new Date(formData.get('date') as string).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        hoursWorked: Number(formData.get('hours')),
-      });
-      setIsAddingMachine(false);
+      if (editingMachine) {
+        await updateDoc(doc(db, 'machines', editingMachine.id), machineData);
+        setEditingMachine(null);
+      } else {
+        await addDoc(collection(db, 'machines'), machineData);
+        setIsAddingMachine(false);
+      }
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'machines');
+      handleFirestoreError(err, editingMachine ? OperationType.UPDATE : OperationType.CREATE, 'machines');
     }
+  };
+
+  const handleDeleteMachine = async (id: string) => {
+    if (!window.confirm('¿Eliminar máquina?')) return;
+    try {
+      await deleteDoc(doc(db, 'machines', id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `machines/${id}`);
+    }
+  };
+
+  const handleAddWorker = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (isSavingWorker) return;
+    
+    const formData = new FormData(e.currentTarget);
+    const workerName = formData.get('name') as string;
+    const workerRole = formData.get('role') as any;
+    
+    // Safety: don't add if name is empty
+    if (!workerName.trim()) return;
+
+    setIsSavingWorker(true);
+    const id = `w-${Date.now()}`;
+    const newWorker: Worker = {
+      id,
+      name: workerName.trim(),
+      role: workerRole,
+    };
+
+    try {
+      await setDoc(doc(db, 'users', id), newWorker);
+      setIsAddingWorker(false);
+      (e.target as HTMLFormElement).reset();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'users');
+    } finally {
+      setIsSavingWorker(false);
+    }
+  };
+
+  const batchAddWorkers = async () => {
+    const list = [
+      { name: "Cristian Jara", role: "boss" as const }, // Supervisor role was boss in types
+      { name: "Adonis Espinoza", role: "boss" as const },
+      { name: "René Villa", role: "operator" as const },
+      { name: "Héctor Muñoz", role: "motosierrist" as const },
+      { name: "Cristian Monsalves", role: "motosierrist" as const },
+      { name: "Jaime Cáceres", role: "motosierrist" as const },
+      { name: "Julio Mulato", role: "motosierrist" as const },
+    ];
+
+    for (const w of list) {
+      const id = `w-${Math.random().toString(36).substr(2, 9)}`;
+      await setDoc(doc(db, 'users', id), {
+        id,
+        ...w,
+        createdAt: Timestamp.now()
+      });
+    }
+    alert("Trabajadores agregados exitosamente");
+  };
+
+  const handleDeleteWorker = async (id: string) => {
+    if (!window.confirm('¿Eliminar trabajador del sistema?')) return;
+    try {
+      await deleteDoc(doc(db, 'users', id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `users/${id}`);
+    }
+  };
+
+  const getUserLocation = () => {
+    if (!navigator.geolocation) {
+      alert("La geolocalización no está soportada en este navegador.");
+      return;
+    }
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setCurrentLocation({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude
+        });
+        setIsLocating(false);
+      },
+      (error) => {
+        console.error("Error al obtener ubicación:", error);
+        alert("No se pudo obtener la ubicación. Verifica los permisos.");
+        setIsLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+    );
+  };
+
+  const getMaintenanceStatus = (nextDateStr: string) => {
+    const nextDate = new Date(nextDateStr);
+    const today = new Date();
+    const diffTime = nextDate.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 0) return { color: 'bg-red-500', label: 'Vencido', icon: <AlertCircle size={10} className="text-white" /> };
+    if (diffDays <= 7) return { color: 'bg-orange-500', label: 'Próximo', icon: <Clock size={10} className="text-white" /> };
+    return { color: 'bg-green-500', label: 'Al día', icon: <div className="w-1.5 h-1.5 bg-white rounded-full" /> };
+  };
+
+  const generateWhatsAppReport = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const todayHarvest = records.filter(r => r.date === today);
+    const totalExtracted = todayHarvest.reduce((sum, r) => sum + r.extractedVolume, 0);
+    const totalStacked = todayHarvest.reduce((sum, r) => sum + r.stackedVolume, 0);
+    
+    const todaySupplies = supplyRecords.filter(s => s.date === today);
+    const fuelUsed = todaySupplies.filter(s => s.category.startsWith('fuel')).reduce((sum, s) => sum + s.quantity, 0);
+
+    const message = `*RESUMEN DIARIO - COMERCIAL MONTE*\n` +
+      `📅 Fecha: ${today}\n\n` +
+      `🪵 *Cosecha*\n` +
+      `- Extraído: ${totalExtracted} m³\n` +
+      `- Arrumado: ${totalStacked} m³\n\n` +
+      `⛽ *Insumos*\n` +
+      `- Combustible: ${fuelUsed} L\n\n` +
+      `🚜 *Mantenimiento*\n` +
+      `${machines.filter(m => {
+        const diff = new Date(m.nextMaintenanceDate).getTime() - new Date().getTime();
+        return diff < 4 * 24 * 60 * 60 * 1000;
+      }).map(m => `- ALERTA: ${m.name}`).join('\n') || 'Todo al día'}\n\n` +
+      `_Enviado desde el Sistema de Control Monte SPA_`;
+
+    const encoded = encodeURIComponent(message);
+    window.open(`https://wa.me/?text=${encoded}`, '_blank');
   };
 
   const exportToCSV = () => {
@@ -437,7 +674,7 @@ export default function App() {
           <SidebarLink icon={<FileText size={18} />} label="Registro Cosecha" active={activeTab === 'reports'} onClick={() => { setActiveTab('reports'); setIsSidebarOpen(false); }} />
           <SidebarLink icon={<Fuel size={18} />} label="Uso de Insumos" active={activeTab === 'supplies'} onClick={() => { setActiveTab('supplies'); setIsSidebarOpen(false); }} />
           
-          {userProfile.role !== 'crew_lead' && (
+          {userProfile.role !== 'worker' && (
             <>
               <SidebarLink icon={<Package size={18} />} label="Inventario" active={activeTab === 'inventory'} onClick={() => { setActiveTab('inventory'); setIsSidebarOpen(false); }} />
               <SidebarLink icon={<Wrench size={18} />} label="Maquinaria" active={activeTab === 'maintenance'} onClick={() => { setActiveTab('maintenance'); setIsSidebarOpen(false); }} />
@@ -455,7 +692,12 @@ export default function App() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{userProfile.name}</p>
-              <p className="text-[10px] text-white/50 uppercase truncate tracking-tighter">{userProfile.role.replace('_', ' ')}</p>
+              <p className="text-[10px] text-white/50 uppercase truncate tracking-tighter">
+                {userProfile.role === 'owner' ? 'Propietario' :
+                 userProfile.role === 'boss' ? 'Jefe de Faena' :
+                 userProfile.role === 'operator' ? 'Operador' :
+                 userProfile.role === 'motosierrist' ? 'Motosierrista' : 'Trabajador'}
+              </p>
             </div>
           </div>
           <button 
@@ -475,7 +717,13 @@ export default function App() {
               <Menu size={24} />
             </button>
             <h2 className="text-sm font-mono uppercase tracking-widest text-[#3E5B3F]/60">
-              {activeTab}
+              {activeTab === 'dashboard' ? 'Panel de Control' :
+               activeTab === 'reports' ? 'Registros de Cosecha' :
+               activeTab === 'supplies' ? 'Consumo de Insumos' :
+               activeTab === 'inventory' ? 'Inventario Central' :
+               activeTab === 'maintenance' ? 'Estado de Maquinaria' :
+               activeTab === 'workers' ? 'Equipo de Personal' :
+               activeTab === 'settings' ? 'Configuración' : activeTab}
             </h2>
           </div>
           <div className="flex items-center gap-2">
@@ -523,11 +771,21 @@ export default function App() {
 
                 {/* Stats Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-                  <StatCard title="Extraída" value={`${stats.totalExtracted} m³`} icon={<TrendingUp className="text-blue-600" size={18} />} subtext="Histórico" />
-                  <StatCard title="Arrumada" value={`${stats.totalStacked} m³`} icon={<Layers className="text-orange-600" size={18} />} subtext="En cancha" />
-                  <StatCard title="En Tránsito" value={`${stats.inTransit} m³`} icon={<ArrowUpFromLine className="text-purple-600" size={18} />} subtext="Por arrumar" />
-                  <StatCard title="Rendimiento" value={`${stats.fuelEfficiency} L/m³`} icon={<Fuel className="text-red-600" size={18} />} subtext="Combustible/Prod" />
-                  <StatCard title="Eficiencia" value={`${stats.efficiency}%`} icon={<TrendingUp className="text-green-600" size={18} />} subtext=" stacked/extracted" />
+                  <StatCard title="Total Extraído" value={`${stats.totalExtracted} m³`} icon={<TrendingUp className="text-blue-600" size={18} />} subtext="Volumen histórico" />
+                  <StatCard title="Total Arrumado" value={`${stats.totalStacked} m³`} icon={<Layers className="text-orange-600" size={18} />} subtext="En cancha actual" />
+                  <StatCard title="Rendimiento" value={`${stats.fuelEfficiency} L/m³`} icon={<Fuel className="text-red-600" size={18} />} subtext="Bencina/Producción" />
+                  <div className="bg-[#1D2B1E] p-4 lg:p-6 rounded-2xl shadow-lg border border-white/10 flex flex-col justify-between group cursor-pointer hover:bg-[#2C3E2D] transition-all" onClick={generateWhatsAppReport}>
+                    <div className="flex justify-between items-start mb-2">
+                       <div className="p-2 bg-white/10 rounded-lg text-[#00E676]">
+                         <MessageCircle size={18} />
+                       </div>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1 font-sans">Compartir Reporte</p>
+                      <h4 className="text-lg lg:text-xl font-bold text-white font-serif italic">Resumen Diario</h4>
+                    </div>
+                  </div>
+                  <StatCard title="Eficiencia" value={`${stats.efficiency}%`} icon={<TrendingUp className="text-green-600" size={18} />} subtext="Apilado vs Corte" />
                 </div>
 
                 {/* Main Grid */}
@@ -535,7 +793,7 @@ export default function App() {
                   {/* Production Chart */}
                   <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-[#3E5B3F]/5">
                     <div className="flex items-center justify-between mb-8">
-                      <h3 className="text-lg font-bold flex items-center gap-2 italic">Tendencia de Copas</h3>
+                      <h3 className="text-lg font-bold flex items-center gap-2 italic">Tendencia de Productividad</h3>
                       <div className="flex gap-2 text-xs font-bold text-gray-400">
                         <span className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-[#3E5B3F]" /> Extraído</span>
                         <span className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-[#A7C0A8]" /> Arrumado</span>
@@ -557,24 +815,36 @@ export default function App() {
 
                   {/* Quick Maintenance */}
                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#3E5B3F]/5">
-                    <h3 className="text-lg font-bold mb-6 flex items-center gap-2">Mantenimiento Próximo</h3>
+                    <div className="flex items-center justify-between mb-6">
+                      <h3 className="text-lg font-bold flex items-center gap-2">Alertas de Maquinaria</h3>
+                      <div className="text-right flex flex-col items-end">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none">Flota Activa</p>
+                        <p className="text-sm font-bold font-mono text-[#3E5B3F]">{machines.length}</p>
+                      </div>
+                    </div>
                     <div className="space-y-4">
                       {machines.sort((a,b) => a.nextMaintenanceDate.localeCompare(b.nextMaintenanceDate)).slice(0, 4).map(m => (
-                        <div key={m.id} className="flex items-center gap-4 p-3 hover:bg-gray-50 rounded-xl transition-colors">
+                        <div key={m.id} className="flex items-center gap-4 p-3 hover:bg-gray-100 rounded-xl transition-colors cursor-pointer group/item" onClick={() => setActiveTab('maintenance')}>
                           <div className={cn(
-                            "w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0",
-                            new Date(m.nextMaintenanceDate) < new Date() ? "bg-red-50 text-red-600" : "bg-blue-50 text-blue-600"
+                            "w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 border",
+                            new Date(m.nextMaintenanceDate) < new Date() ? "bg-red-50 text-red-600 border-red-100" : "bg-blue-50 text-blue-600 border-blue-50"
                           )}>
                             {m.type === 'truck' ? <Truck size={20} /> : <Wrench size={20} />}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold truncate">{m.name}</p>
-                            <p className="text-[10px] text-gray-400 uppercase font-mono">{m.nextMaintenanceDate}</p>
+                            <p className="text-sm font-bold truncate group-hover/item:text-[#3E5B3F] transition-colors">{m.name}</p>
+                            <p className={cn(
+                              "text-[10px] uppercase font-mono font-bold",
+                              new Date(m.nextMaintenanceDate) < new Date() ? "text-red-500" : "text-gray-400"
+                            )}>{new Date(m.nextMaintenanceDate) < new Date() ? 'VENCIDO' : `Próximo: ${m.nextMaintenanceDate}`}</p>
                           </div>
+                          {new Date(m.nextMaintenanceDate) < new Date() && (
+                            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                          )}
                         </div>
                       ))}
                     </div>
-                    <button onClick={() => setActiveTab('maintenance')} className="w-full mt-6 py-2 text-xs font-bold text-[#3E5B3F] bg-[#3E5B3F]/5 rounded-lg hover:bg-[#3E5B3F]/10 transition-colors uppercase tracking-widest">Ver Todo el Parque</button>
+                    <button onClick={() => setActiveTab('maintenance')} className="w-full mt-6 py-2 text-xs font-bold text-[#3E5B3F] bg-[#3E5B3F]/5 rounded-lg hover:bg-[#3E5B3F]/10 transition-colors uppercase tracking-widest">Gestionar Maquinaria</button>
                   </div>
                 </div>
               </motion.div>
@@ -629,17 +899,19 @@ export default function App() {
               <motion.div key="maintenance" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {machines.map(m => (
-                    <div key={m.id} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm group hover:border-[#3E5B3F]/20 transition-all">
+                    <div key={m.id} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm group hover:border-[#3E5B3F]/20 transition-all relative">
+                      {/* Traffic Light Indicator */}
+                      <div className="absolute top-4 right-4 flex items-center gap-1.5 px-2 py-1 rounded-full text-[8px] font-bold uppercase tracking-widest text-white shadow-sm overflow-hidden">
+                        <div className={cn("absolute inset-0 opacity-80", getMaintenanceStatus(m.nextMaintenanceDate).color)} />
+                        <div className="relative flex items-center gap-1">
+                          {getMaintenanceStatus(m.nextMaintenanceDate).icon}
+                          {getMaintenanceStatus(m.nextMaintenanceDate).label}
+                        </div>
+                      </div>
+
                       <div className="flex justify-between items-start mb-6">
                         <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center text-gray-600 group-hover:bg-[#F8F9F8] transition-colors">
                           {m.type === 'truck' ? <Truck size={24} /> : <Wrench size={24} />}
-                        </div>
-                        <div className="text-right">
-                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Manto. Próximo</p>
-                          <p className={cn(
-                            "text-sm font-bold font-mono",
-                            new Date(m.nextMaintenanceDate) < new Date() ? "text-red-600" : "text-[#3E5B3F]"
-                          )}>{m.nextMaintenanceDate}</p>
                         </div>
                       </div>
                       <h4 className="font-bold text-lg mb-2">{m.name}</h4>
@@ -653,7 +925,14 @@ export default function App() {
                           <p className="font-mono font-bold text-xs">{m.lastMaintenanceDate}</p>
                         </div>
                       </div>
-                      <button className="w-full mt-6 py-3 border border-gray-100 rounded-2xl text-xs font-bold hover:bg-[#1D2B1E] hover:text-white transition-all uppercase tracking-widest">Registrar Servicio</button>
+                      <div className="flex gap-2 mt-6">
+                        <button onClick={() => setEditingMachine(m)} className="flex-1 py-3 border border-gray-100 rounded-2xl text-xs font-bold hover:bg-[#1D2B1E] hover:text-white transition-all uppercase tracking-widest flex items-center justify-center gap-2">
+                          <Edit size={14} /> Editar
+                        </button>
+                        <button onClick={() => handleDeleteMachine(m.id)} className="px-4 py-3 border border-red-100 text-red-600 rounded-2xl text-xs font-bold hover:bg-red-600 hover:text-white transition-all">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -668,38 +947,51 @@ export default function App() {
                 className="space-y-6"
               >
                 <div className="flex items-center justify-between">
-                  <h3 className="text-2xl font-bold">Equipo de Comercial Monte</h3>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-                      <Search size={18} className="text-gray-400" />
-                    </div>
-                    <input 
-                      type="text" 
-                      placeholder="Buscar trabajador..." 
-                      className="pl-10 pr-4 py-2 bg-white border border-[#3E5B3F]/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 w-64"
-                    />
+                  <h3 className="text-2xl font-bold italic font-serif">Equipo en Terreno</h3>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={batchAddWorkers}
+                      className="hidden lg:flex p-2 lg:px-4 lg:py-2 border border-[#3E5B3F]/20 text-[#3E5B3F] rounded-lg text-xs font-bold hover:bg-[#3E5B3F]/5 transition-colors"
+                    >
+                      Carga Masiva
+                    </button>
+                    <button 
+                      onClick={() => setIsAddingWorker(true)}
+                      className="p-2 lg:px-4 lg:py-2 bg-[#1D2B1E] text-white rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-[#2C3E2D] transition-colors shadow-sm"
+                    >
+                      <Plus size={18} /> <span className="hidden lg:inline">Nuevo Colaborador</span>
+                    </button>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {workers.map((worker) => (
-                    <div key={worker.id} className="bg-white p-6 rounded-2xl shadow-sm border border-[#3E5B3F]/5 flex items-center gap-4 hover:shadow-md transition-shadow cursor-default">
+                    <div key={worker.id} className="bg-white p-6 rounded-2xl shadow-sm border border-[#3E5B3F]/5 flex items-center gap-4 hover:border-[#3E5B3F]/20 transition-all relative group">
                       <div className={cn(
                         "w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg",
                         worker.role === 'owner' ? "bg-amber-100 text-amber-900" :
-                        worker.role === 'supervisor' ? "bg-blue-100 text-blue-900" :
-                        worker.role === 'crew_lead' ? "bg-emerald-100 text-emerald-900" :
+                        worker.role === 'boss' ? "bg-blue-100 text-blue-900" :
+                        worker.role === 'operator' ? "bg-emerald-100 text-emerald-900" :
+                        worker.role === 'motosierrist' ? "bg-orange-100 text-orange-900" :
                         "bg-gray-100 text-gray-900"
                       )}>
                         {(worker.name || 'U').charAt(0)}
                       </div>
-                      <div>
-                        <h4 className="font-bold">{worker.name || 'Usuario'}</h4>
-                        <p className="text-xs uppercase tracking-tighter text-gray-500 font-medium">
-                          {(worker.role || 'worker').replace('_', ' ')}
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-bold truncate">{worker.name || 'Usuario'}</h4>
+                        <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold">
+                          {worker.role === 'owner' ? 'Propietario / Admin' :
+                           worker.role === 'boss' ? 'Jefe de Faena' : 
+                           worker.role === 'operator' ? 'Operador Forestal' :
+                           worker.role === 'motosierrist' ? 'Motosierrista' : 'Trabajador General'}
                         </p>
                       </div>
-                      <ChevronRight className="ml-auto text-gray-300" size={20} />
+                      <button 
+                        onClick={() => handleDeleteWorker(worker.id)}
+                        className="opacity-0 group-hover:opacity-100 p-2 text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -753,31 +1045,47 @@ export default function App() {
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-left">
-                        <thead className="bg-[#F8F9F8] text-[#3E5B3F]/60 text-[10px] uppercase font-mono tracking-widest px-6">
-                          <tr>
-                            <th className="px-6 py-4">Fecha</th>
-                            <th className="px-6 py-4">Categoría</th>
-                            <th className="px-6 py-4">Cantidad</th>
-                            <th className="px-6 py-4">Destino</th>
-                            <th className="px-6 py-4">Reportado</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[#3E5B3F]/5">
-                          {supplyRecords.map((s) => (
-                            <tr key={s.id} className="hover:bg-[#F8F9F8] transition-colors">
-                              <td className="px-6 py-4 text-sm font-medium">{s.date}</td>
-                              <td className="px-6 py-4">
-                                <span className={cn(
-                                  "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase",
-                                  s.category.startsWith('fuel') ? "bg-red-50 text-red-700" : "bg-blue-50 text-blue-700"
-                                )}>
-                                  {getSupplyLabel(s.category)}
-                                </span>
-                              </td>
-                              <td className="px-6 py-4 text-sm font-mono text-sm font-bold">{s.quantity} {s.unit}</td>
-                              <td className="px-6 py-4 text-sm text-gray-600 font-medium">{s.description}</td>
-                              <td className="px-6 py-4 text-sm">
-                                {workers.find(p => p.id === s.reportedBy)?.name || s.reportedBy}
+                      <thead className="bg-[#F8F9F8] text-[#3E5B3F]/60 text-[10px] uppercase font-mono tracking-widest px-6">
+                        <tr>
+                          <th className="px-6 py-4">Fecha/Hora</th>
+                          <th className="px-6 py-4">Categoría</th>
+                          <th className="px-6 py-4">Cant.</th>
+                          <th className="px-6 py-4">Para (Persona/Máquina)</th>
+                          <th className="px-6 py-4">Responsable</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#3E5B3F]/5">
+                        {supplyRecords.map((s) => (
+                          <tr key={s.id} className="hover:bg-[#F8F9F8] transition-colors">
+                            <td className="px-6 py-4">
+                              <p className="text-sm font-medium">{s.date}</p>
+                              <p className="text-[10px] text-gray-400 font-bold">{s.time || '--:--'}</p>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={cn(
+                                "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase",
+                                s.category.startsWith('fuel') ? "bg-red-50 text-red-700" : "bg-blue-50 text-blue-700"
+                              )}>
+                                {getSupplyLabel(s.category)}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-sm font-mono text-sm font-bold">{s.quantity} {s.unit}</td>
+                            <td className="px-6 py-4">
+                              <p className="text-sm text-gray-600 font-medium truncate max-w-[150px]">{s.description}</p>
+                              {(s as any).recipient && <p className="text-[10px] text-[#3E5B3F] font-bold">Entrega: {(s as any).recipient}</p>}
+                            </td>
+                            <td className="px-6 py-4 text-sm">
+                              {workers.find(p => p.id === s.reportedBy)?.name || s.reportedBy}
+                            </td>
+                              <td className="px-6 py-4 text-right">
+                                <div className="flex justify-end gap-2">
+                                  <button onClick={() => setEditingSupply(s)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                                    <Edit size={16} />
+                                  </button>
+                                  <button onClick={() => handleDeleteSupply(s)} className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                                    <Trash2 size={16} />
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           ))}
@@ -831,9 +1139,8 @@ export default function App() {
                     <table className="w-full text-left">
                       <thead className="bg-[#F8F9F8] text-[#3E5B3F]/60 text-[10px] uppercase font-mono tracking-widest">
                         <tr>
-                          <th className="px-6 py-4">Fecha</th>
-                          <th className="px-6 py-4">Extraído (m³)</th>
-                          <th className="px-6 py-4">Arrumado (m³)</th>
+                          <th className="px-6 py-4">Fecha/Hora</th>
+                          <th className="px-6 py-4">Cosecha (m³)</th>
                           <th className="px-6 py-4">Eficiencia</th>
                           <th className="px-6 py-4">Responsable</th>
                           <th className="px-6 py-4">Notas</th>
@@ -842,22 +1149,63 @@ export default function App() {
                       <tbody className="divide-y divide-[#3E5B3F]/5">
                         {records.map((record) => (
                           <tr key={record.id} className="hover:bg-[#F8F9F8] transition-colors">
-                            <td className="px-6 py-4 text-sm font-medium">{record.date}</td>
-                            <td className="px-6 py-4 font-mono text-sm text-[#3E5B3F]">{record.extractedVolume}</td>
-                            <td className="px-6 py-4 font-mono text-sm">{record.stackedVolume}</td>
+                            <td className="px-6 py-4">
+                              <p className="text-sm font-medium">{record.date}</p>
+                              <div className="flex items-center gap-2">
+                                <p className="text-[10px] text-gray-400 font-bold">{record.time || '--:--'}</p>
+                                {record.location && (
+                                  <a 
+                                    href={`https://www.google.com/maps?q=${record.location.lat},${record.location.lng}`} 
+                                    target="_blank" 
+                                    rel="noreferrer"
+                                    className="p-1 bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors"
+                                    title="Ver en Google Maps"
+                                  >
+                                    <MapPin size={10} />
+                                  </a>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="flex gap-4">
+                                <div>
+                                  <p className="text-[8px] uppercase text-gray-400 font-bold">Extraído</p>
+                                  <p className="font-mono text-xs font-bold text-[#3E5B3F]">{record.extractedVolume}m³</p>
+                                </div>
+                                <div>
+                                  <p className="text-[8px] uppercase text-gray-400 font-bold">Arrumado</p>
+                                  <p className="font-mono text-xs font-bold">{record.stackedVolume}m³</p>
+                                </div>
+                              </div>
+                              {record.sector && (
+                                <p className="text-[10px] text-[#3E5B3F] font-bold mt-1 uppercase tracking-tighter bg-[#F8F9F8] inline-block px-1 rounded">
+                                  Sector: {record.sector}
+                                </p>
+                              )}
+                            </td>
                             <td className="px-6 py-4 text-sm">
                               <span className={cn(
-                                "px-2 py-1 rounded text-xs font-bold font-mono",
-                                (record.stackedVolume / record.extractedVolume) > 0.9 ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+                                "px-2 py-1 rounded text-[10px] font-bold font-mono border",
+                                (record.stackedVolume / record.extractedVolume) > 0.9 ? "bg-green-50 text-green-700 border-green-100" : "bg-amber-50 text-amber-700 border-amber-100"
                               )}>
                                 {((record.stackedVolume / record.extractedVolume) * 100).toFixed(0)}%
                               </span>
                             </td>
-                            <td className="px-6 py-4 text-sm flex items-center gap-2">
+                            <td className="px-6 py-4 text-sm">
                               {workers.find(p => p.id === record.reportedBy)?.name || record.reportedBy}
                             </td>
                             <td className="px-6 py-4 text-xs text-gray-500 max-w-xs truncate">
                               {record.notes || "Sin observaciones"}
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="flex justify-end gap-2">
+                                <button onClick={() => setEditingRecord(record)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                                  <Edit size={16} />
+                                </button>
+                                <button onClick={() => handleDeleteRecord(record.id)} className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -898,27 +1246,69 @@ export default function App() {
               className="relative bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden"
             >
               <div className="bg-[#1D2B1E] p-6 lg:p-8 text-white">
-                <h3 className="text-xl lg:text-2xl font-bold italic font-serif">Nuevo Reporte</h3>
-                <p className="text-white/60 text-xs mt-1">Ingresa los datos de la jornada actual</p>
+                <h3 className="text-xl lg:text-2xl font-bold italic font-serif">
+                  {editingRecord ? 'Editar Reporte' : 'Nuevo Reporte'}
+                </h3>
+                <p className="text-white/60 text-xs mt-1">
+                  {editingRecord ? 'Modifica los datos del registro' : 'Ingresa los datos de la jornada actual'}
+                </p>
               </div>
               <form onSubmit={handleAddRecord} className="p-6 lg:p-8 space-y-4 lg:space-y-6">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Fecha</label>
-                    <input 
-                      required 
-                      name="date" 
-                      type="date" 
-                      defaultValue={new Date().toISOString().split('T')[0]}
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Reportado Por</label>
-                    <div className="w-full px-4 py-3 bg-gray-100 border border-gray-100 rounded-xl text-gray-500 text-sm">
-                      {userProfile.name}
+                    <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Fecha/Hora</label>
+                    <div className="flex gap-2">
+                       <input 
+                         required 
+                         name="date" 
+                         type="date" 
+                         defaultValue={editingRecord?.date || new Date().toISOString().split('T')[0]}
+                         className="flex-1 px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 text-sm"
+                       />
+                       <input 
+                         required 
+                         name="time" 
+                         type="time" 
+                         defaultValue={editingRecord?.time || new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })}
+                         className="w-[110px] px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 text-sm"
+                       />
                     </div>
                   </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Ubicación (GPS)</label>
+                    <button 
+                      type="button" 
+                      onClick={getUserLocation}
+                      disabled={isLocating}
+                      className={cn(
+                        "w-full px-4 py-3 border rounded-xl flex items-center justify-center gap-2 transition-all text-xs font-bold uppercase tracking-widest",
+                        currentLocation 
+                          ? "bg-green-50 border-green-200 text-green-700" 
+                          : "bg-gray-50 border-gray-100 text-gray-500 hover:bg-gray-100"
+                      )}
+                    >
+                      {isLocating ? (
+                        <div className="flex items-center gap-2 animate-pulse">
+                          <Navigation size={14} className="animate-spin" /> Localizando...
+                        </div>
+                      ) : currentLocation ? (
+                        <><MapPin size={14} /> Posición Fijada</>
+                      ) : (
+                        <><Navigation size={14} /> Geo-Referenciar</>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Sector / Rodal</label>
+                  <input 
+                    name="sector" 
+                    type="text" 
+                    placeholder="Ej: Lote A, Quebrada Honda..." 
+                    defaultValue={editingRecord?.sector}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20"
+                  />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
@@ -929,6 +1319,7 @@ export default function App() {
                       name="extracted" 
                       type="number" 
                       placeholder="0.00"
+                      defaultValue={editingRecord?.extractedVolume}
                       className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 font-mono"
                     />
                   </div>
@@ -939,6 +1330,7 @@ export default function App() {
                       name="stacked" 
                       type="number" 
                       placeholder="0.00"
+                      defaultValue={editingRecord?.stackedVolume}
                       className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 font-mono"
                     />
                   </div>
@@ -950,6 +1342,7 @@ export default function App() {
                     name="notes" 
                     rows={3} 
                     placeholder="Detalles sobre el clima, maquinaria, o terreno..."
+                    defaultValue={editingRecord?.notes}
                     className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 text-sm"
                   ></textarea>
                 </div>
@@ -957,7 +1350,7 @@ export default function App() {
                 <div className="flex gap-4 pt-4">
                   <button 
                     type="button"
-                    onClick={() => setIsAddingRecord(false)}
+                    onClick={() => { setIsAddingRecord(false); setEditingRecord(null); }}
                     className="flex-1 py-3 text-sm font-bold border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
                   >
                     Cancelar
@@ -966,7 +1359,7 @@ export default function App() {
                     type="submit"
                     className="flex-1 py-3 bg-[#1D2B1E] text-white rounded-xl text-sm font-bold hover:bg-[#2C3E2D] transition-colors shadow-lg shadow-[#1D2B1E]/20"
                   >
-                    Guardar Registro
+                    {editingRecord ? 'Guardar Cambios' : 'Guardar Registro'}
                   </button>
                 </div>
               </form>
@@ -977,13 +1370,13 @@ export default function App() {
 
       {/* Add Supply Modal */}
       <AnimatePresence>
-        {isAddingSupply && (
+        {(isAddingSupply || editingSupply) && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setIsAddingSupply(false)}
+              onClick={() => { setIsAddingSupply(false); setEditingSupply(null); }}
               className="absolute inset-0 bg-[#1D2B1E]/60 backdrop-blur-sm"
             />
             <motion.div 
@@ -994,19 +1387,33 @@ export default function App() {
             >
               <div className="bg-[#1D2B1E] p-6 lg:p-8 text-white">
                 <h3 className="text-xl lg:text-2xl font-bold flex items-center gap-2 italic font-serif">
-                  <Droplets /> Control de Insumos
+                  <Droplets /> {editingSupply ? 'Editar Insumo' : 'Control de Insumos'}
                 </h3>
-                <p className="text-white/60 text-xs mt-1">Registra carga de combustible u aceites</p>
+                <p className="text-white/60 text-xs mt-1">
+                  {editingSupply ? 'Modifica los datos del consumo' : 'Registra carga de combustible u aceites'}
+                </p>
               </div>
               <form onSubmit={handleAddSupply} className="p-6 lg:p-8 space-y-4 lg:space-y-6">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Fecha</label>
-                    <input required name="date" type="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20" />
+                    <input required name="date" type="date" defaultValue={editingSupply?.date || new Date().toISOString().split('T')[0]} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Categoría</label>
-                    <select name="category" className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 appearance-none">
+                    <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Hora</label>
+                    <input required name="time" type="time" defaultValue={editingSupply?.time || new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Categoría Insumo</label>
+                    <select 
+                      name="category" 
+                      defaultValue={editingSupply?.category || 'fuel_vehicle'} 
+                      onChange={(e) => setSupplyCategoryFilter(e.target.value as SupplyCategory)}
+                      className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 appearance-none"
+                    >
                       <option value="fuel_vehicle">Diesel Vehículos</option>
                       <option value="fuel_chainsaw">Bencina Motosierra</option>
                       <option value="oil_motor">Aceite Motor</option>
@@ -1015,38 +1422,92 @@ export default function App() {
                       <option value="other">Otros Insumos</option>
                     </select>
                   </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Cantidad</label>
-                    <input required name="quantity" type="number" step="0.01" placeholder="0.00" className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 font-mono" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Unidad</label>
-                    <select name="unit" className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 appearance-none">
-                      <option value="L">Litros (L)</option>
-                      <option value="Unit">Unidades</option>
-                      <option value="Kg">Kilos (Kg)</option>
-                    </select>
+                    <input required name="quantity" type="number" step="0.01" placeholder="0.00" defaultValue={editingSupply?.quantity} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 font-mono" />
                   </div>
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Descripción / Destino</label>
-                  <input required name="description" type="text" placeholder="Ej: Camión Volvo, Motosierra Stihl #4..." className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20" />
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Destino de la Entrega</label>
+                    <button type="button" onClick={() => setIsAddingWorker(true)} className="text-[10px] font-bold text-[#3E5B3F] hover:bg-[#3E5B3F]/5 px-2 py-1 rounded-md transition-colors flex items-center gap-1">
+                      <Plus size={12} /> Nuevo Trabajador
+                    </button>
+                  </div>
+                  <select name="recipient" defaultValue={(editingSupply as any)?.recipient} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 appearance-none">
+                    <option value="">Seleccionar Receptor...</option>
+                    
+                    {/* Suggested recipients based on category */}
+                    <optgroup label="Sugeridos (Personal)">
+                      {workers.filter(w => {
+                        if (supplyCategoryFilter === 'fuel_chainsaw' || supplyCategoryFilter === 'oil_premix' || supplyCategoryFilter === 'oil_chain') return w.role === 'motosierrist';
+                        if (supplyCategoryFilter === 'fuel_vehicle') return w.role === 'boss' || w.role === 'operator';
+                        return false;
+                      }).map(w => (
+                        <option key={w.id} value={w.name}>{w.name} ({
+                          w.role === 'boss' ? 'Jefe' : 
+                          w.role === 'operator' ? 'Operador' : 
+                          w.role === 'motosierrist' ? 'Motosierrista' : 'Personal'
+                        })</option>
+                      ))}
+                    </optgroup>
+
+                    <optgroup label="Maquinaria">
+                      {machines.filter(m => {
+                         if (supplyCategoryFilter === 'fuel_vehicle' || supplyCategoryFilter === 'oil_motor') return true;
+                         return m.type === 'chainsaw';
+                      }).map(m => (
+                        <option key={m.id} value={m.name}>{m.name}</option>
+                      ))}
+                    </optgroup>
+
+                    <optgroup label="Todo el Personal">
+                      {workers.filter(w => {
+                        // Filter out those already in suggested to avoid duplicates
+                        if (supplyCategoryFilter === 'fuel_chainsaw' || supplyCategoryFilter === 'oil_premix' || supplyCategoryFilter === 'oil_chain') return w.role !== 'motosierrist';
+                        if (supplyCategoryFilter === 'fuel_vehicle') return w.role !== 'boss' && w.role !== 'operator';
+                        return true;
+                      }).map(w => (
+                        <option key={w.id} value={w.name}>{w.name}</option>
+                      ))}
+                    </optgroup>
+                    
+                    <optgroup label="Otras Máquinas">
+                      {machines.filter(m => {
+                         if (supplyCategoryFilter === 'fuel_vehicle' || supplyCategoryFilter === 'oil_motor') return false;
+                         return m.type !== 'chainsaw';
+                      }).map(m => (
+                        <option key={m.id} value={m.name}>{m.name}</option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Unidad y Detalle Extra</label>
+                  <div className="flex gap-2">
+                    <select name="unit" defaultValue={editingSupply?.unit || 'L'} className="w-[120px] px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 appearance-none text-xs font-bold">
+                      <option value="L">Litros (L)</option>
+                      <option value="Unit">Unidades</option>
+                      <option value="Kg">Kilos (Kg)</option>
+                    </select>
+                    <input required name="description" type="text" defaultValue={editingSupply?.description} placeholder="Patente, Nro. de máquina o detalle..." className="flex-1 px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20" />
+                  </div>
                 </div>
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Reportado Por</label>
                   <div className="w-full px-4 py-3 bg-gray-100 border border-gray-100 rounded-xl text-gray-500 text-sm">
-                    {userProfile.name}
+                    {editingSupply ? (workers.find(w => w.id === editingSupply.reportedBy)?.name || editingSupply.reportedBy) : userProfile.name}
                   </div>
                 </div>
 
                 <div className="flex gap-4 pt-4">
-                  <button type="button" onClick={() => setIsAddingSupply(false)} className="flex-1 py-3 text-sm font-bold border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors">Cancelar</button>
-                  <button type="submit" className="flex-1 py-3 bg-[#1D2B1E] text-white rounded-xl text-sm font-bold hover:bg-[#2C3E2D] transition-colors shadow-lg shadow-[#1D2B1E]/20">Registrar</button>
+                  <button type="button" onClick={() => { setIsAddingSupply(false); setEditingSupply(null); }} className="flex-1 py-3 text-sm font-bold border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors">Cancelar</button>
+                  <button type="submit" className="flex-1 py-3 bg-[#1D2B1E] text-white rounded-xl text-sm font-bold hover:bg-[#2C3E2D] transition-colors shadow-lg shadow-[#1D2B1E]/20">
+                    {editingSupply ? 'Guardar Cambios' : 'Registrar'}
+                  </button>
                 </div>
               </form>
             </motion.div>
@@ -1056,23 +1517,27 @@ export default function App() {
 
       {/* Add Machine Modal */}
       <AnimatePresence>
-        {isAddingMachine && (
+        {(isAddingMachine || editingMachine) && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsAddingMachine(false)} className="absolute inset-0 bg-[#1D2B1E]/60 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => { setIsAddingMachine(false); setEditingMachine(null); }} className="absolute inset-0 bg-[#1D2B1E]/60 backdrop-blur-sm" />
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden">
               <div className="bg-[#1D2B1E] p-6 lg:p-8 text-white">
-                <h3 className="text-xl lg:text-2xl font-bold flex items-center gap-2 font-serif italic"><Wrench /> Nueva Maquinaria</h3>
-                <p className="text-white/60 text-xs mt-1">Registra equipos nuevos en el inventario</p>
+                <h3 className="text-xl lg:text-2xl font-bold flex items-center gap-2 font-serif italic">
+                  <Wrench /> {editingMachine ? 'Editar Maquinaria' : 'Nueva Maquinaria'}
+                </h3>
+                <p className="text-white/60 text-xs mt-1">
+                  {editingMachine ? 'Modifica los datos del equipo' : 'Registra equipos nuevos en el inventario'}
+                </p>
               </div>
               <form onSubmit={handleAddMachine} className="p-6 lg:p-8 space-y-4 lg:space-y-6">
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Nombre del Equipo</label>
-                  <input required name="name" type="text" placeholder="Ej: Camión Scania R500" className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20" />
+                  <input required name="name" type="text" defaultValue={editingMachine?.name} placeholder="Ej: Camión Scania R500" className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20" />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Tipo</label>
-                    <select name="type" className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 appearance-none">
+                    <select name="type" defaultValue={editingMachine?.type} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 appearance-none">
                       <option value="truck">Camión / Vehículo</option>
                       <option value="chainsaw">Motosierra</option>
                       <option value="tractor">Maquinaria Pesada</option>
@@ -1081,16 +1546,18 @@ export default function App() {
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Horas/Km Actual</label>
-                    <input required name="hours" type="number" placeholder="0" className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 font-mono" />
+                    <input required name="hours" type="number" defaultValue={editingMachine?.hoursWorked} placeholder="0" className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 font-mono" />
                   </div>
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Último Mantenimiento</label>
-                  <input required name="date" type="date" className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20" />
+                  <input required name="date" type="date" defaultValue={editingMachine?.lastMaintenanceDate} className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20" />
                 </div>
                 <div className="flex gap-4 pt-4">
-                  <button type="button" onClick={() => setIsAddingMachine(false)} className="flex-1 py-3 text-sm font-bold border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors">Cancelar</button>
-                  <button type="submit" className="flex-1 py-3 bg-[#1D2B1E] text-white rounded-xl text-sm font-bold hover:bg-[#2C3E2D] transition-colors shadow-lg shadow-[#1D2B1E]/20">Registrar Equipo</button>
+                  <button type="button" onClick={() => { setIsAddingMachine(false); setEditingMachine(null); }} className="flex-1 py-3 text-sm font-bold border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors">Cancelar</button>
+                  <button type="submit" className="flex-1 py-3 bg-[#1D2B1E] text-white rounded-xl text-sm font-bold hover:bg-[#2C3E2D] transition-colors shadow-lg shadow-[#1D2B1E]/20">
+                    {editingMachine ? 'Guardar Cambios' : 'Registrar Equipo'}
+                  </button>
                 </div>
               </form>
             </motion.div>
@@ -1125,6 +1592,52 @@ export default function App() {
                   <input required name="quantity" type="number" placeholder="Ej: 500" className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 font-mono" />
                 </div>
                 <button type="submit" className="w-full py-3 bg-[#3E5B3F] text-white rounded-xl text-sm font-bold hover:bg-[#2C3E2D] transition-colors shadow-lg">Confirmar Ingreso</button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Add Worker Modal */}
+      <AnimatePresence>
+        {isAddingWorker && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsAddingWorker(false)} className="absolute inset-0 bg-[#1D2B1E]/60 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden border-4 border-[#1D2B1E]">
+              <div className="bg-[#1D2B1E] p-6 text-white text-center">
+                <Users className="mx-auto mb-2" size={32} />
+                <h3 className="text-xl font-bold italic font-serif">Nuevo Colaborador</h3>
+                <p className="text-white/70 text-[10px] mt-1 uppercase tracking-widest font-bold">Gestión de Personal</p>
+              </div>
+              <form onSubmit={handleAddWorker} className="p-6 space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Nombre Completo</label>
+                  <input required name="name" type="text" placeholder="Ej: Adonis Espinoza" className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20" />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Rol del Trabajador</label>
+                  <select name="role" className="w-full px-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#3E5B3F]/20 appearance-none">
+                    <option value="worker">Trabajador General</option>
+                    <option value="boss">Jefe de Faena</option>
+                    <option value="operator">Operador / Maquinista</option>
+                    <option value="motosierrist">Motosierrista Profesional</option>
+                  </select>
+                </div>
+                <button 
+                  type="submit" 
+                  disabled={isSavingWorker}
+                  className={cn(
+                    "w-full py-4 bg-[#1D2B1E] text-white rounded-xl text-sm font-bold transition-colors shadow-lg flex items-center justify-center gap-2",
+                    isSavingWorker ? "opacity-70 cursor-not-allowed" : "hover:bg-[#2C3E2D]"
+                  )}
+                >
+                  {isSavingWorker ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                      Registrando...
+                    </>
+                  ) : 'Registrar en Sistema'}
+                </button>
               </form>
             </motion.div>
           </div>

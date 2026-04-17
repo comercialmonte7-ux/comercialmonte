@@ -3,12 +3,18 @@ export interface Worker {
   uid?: string;
   email?: string;
   name: string;
-  role: 'owner' | 'supervisor' | 'crew_lead' | 'worker';
+  role: 'owner' | 'boss' | 'operator' | 'motosierrist' | 'worker';
 }
 
 export interface HarvestRecord {
   id: string;
   date: string;
+  time?: string;
+  sector?: string; // Sector or "Rodal"
+  location?: {
+    lat: number;
+    lng: number;
+  };
   extractedVolume: number; // m3
   stackedVolume: number;   // m3
   reportedBy: string;      // worker id
@@ -26,6 +32,7 @@ export type SupplyCategory =
 export interface SupplyRecord {
   id: string;
   date: string;
+  time?: string;
   category: SupplyCategory;
   quantity: number; // in Liters mostly
   unit: string;     // 'L', 'Unit', etc.

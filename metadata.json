@@ -1,6 +1,6 @@
 {
   "name": "Control Monte",
   "description": "Sistema de gestión forestal para Comercial Monte SPA. Seguimiento de cosecha, inventario y maquinaria.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["geolocation", "camera"],
   "majorCapabilities": []
 }
