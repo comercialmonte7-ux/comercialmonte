@@ -1,0 +1,93 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Información del perfil de usuario vinculada a Firebase Auth",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "ID único del usuario en Firebase Auth" },
+        "name": { "type": "string", "description": "Nombre completo del usuario" },
+        "email": { "type": "string", "format": "email", "description": "Correo electrónico" },
+        "role": { "type": "string", "enum": ["owner", "supervisor", "crew_lead", "worker"], "description": "Rol jerárquico" }
+      },
+      "required": ["uid", "name", "email", "role"]
+    },
+    "HarvestRecord": {
+      "title": "HarvestRecord",
+      "description": "Registro de extracción y arrumado de madera",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string", "format": "date", "description": "Fecha del reporte" },
+        "extractedVolume": { "type": "number", "description": "m3 extraídos" },
+        "stackedVolume": { "type": "number", "description": "m3 arrumados" },
+        "reportedBy": { "type": "string", "description": "ID del usuario que reporta" },
+        "notes": { "type": "string" }
+      },
+      "required": ["date", "extractedVolume", "stackedVolume", "reportedBy"]
+    },
+    "SupplyRecord": {
+      "title": "SupplyRecord",
+      "description": "Registro de salida de insumos",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "category": { "type": "string", "description": "Categoría del insumo" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "description": { "type": "string" },
+        "reportedBy": { "type": "string" }
+      },
+      "required": ["date", "category", "quantity", "unit", "reportedBy"]
+    },
+    "Machine": {
+      "title": "Machine",
+      "description": "Información de maquinaria del parque",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["truck", "chainsaw", "tractor", "other"] },
+        "lastMaintenanceDate": { "type": "string" },
+        "nextMaintenanceDate": { "type": "string" },
+        "hoursWorked": { "type": "number" }
+      },
+      "required": ["name", "type", "lastMaintenanceDate", "nextMaintenanceDate", "hoursWorked"]
+    },
+    "StockLevel": {
+      "title": "StockLevel",
+      "description": "Niveles actuales de inventario de suministros",
+      "type": "object",
+      "properties": {
+        "category": { "type": "string" },
+        "current": { "type": "number" },
+        "minAlert": { "type": "number" },
+        "unit": { "type": "string" }
+      },
+      "required": ["category", "current", "minAlert", "unit"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Perfiles de usuario autenticados"
+    },
+    "/harvests/{harvestId}": {
+      "schema": "HarvestRecord",
+      "description": "Registros de faena diaria"
+    },
+    "/supplies/{supplyId}": {
+      "schema": "SupplyRecord",
+      "description": "Historial de consumo de insumos"
+    },
+    "/machines/{machineId}": {
+      "schema": "Machine",
+      "description": "Listado de maquinaria"
+    },
+    "/stock/{category}": {
+      "schema": "StockLevel",
+      "description": "Estado actual del inventario"
+    }
+  }
+}
